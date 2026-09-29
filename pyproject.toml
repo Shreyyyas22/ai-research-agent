@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1",
     "asyncpg>=0.30.0",
     "sentence-transformers>=6.1.0",
+    "langgraph>=1.2.12",
 ]
 
 [build-system]
