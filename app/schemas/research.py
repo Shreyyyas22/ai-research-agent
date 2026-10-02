@@ -31,3 +31,19 @@ class Evidence(BaseModel):
     source: Source
     claim: str
     excerpt: str
+
+
+class ExtractedEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim: str
+    excerpt: str
+
+
+class EvidenceExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: list[ExtractedEvidence] = Field(
+        min_length=0,
+        max_length=10,
+    )
