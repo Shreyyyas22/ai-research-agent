@@ -7,7 +7,8 @@ class ResearchState(TypedDict, total=False):
     research_tasks: list[Any]
     sources: list[Any]
     evidence: list[Any]
-    findings: list[Any]
+    conflicts: list[Any]
+    findings: Any
     citations: list[Any]
     report: Any
     research_sufficient: bool
