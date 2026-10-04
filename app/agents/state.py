@@ -12,3 +12,5 @@ class ResearchState(TypedDict, total=False):
     citations: list[Any]
     report: Any
     research_sufficient: bool
+    report_evaluation: Any
+    evaluation_iteration: int

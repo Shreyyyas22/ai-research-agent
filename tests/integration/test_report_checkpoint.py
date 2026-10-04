@@ -41,6 +41,25 @@ class FakeSynthesizer:
             ]
         )
 
+class FakeReportEvaluator:
+    async def evaluate(
+        self,
+        question,
+        report,
+        evidence,
+        llm_provider,
+    ):
+        from app.schemas.research import ReportEvaluation
+
+        return ReportEvaluation(
+            grounded=True,
+            citation_correct=True,
+            hallucination_detected=False,
+            score=5,
+            reasoning="All report claims are supported by the supplied evidence.",
+            unsupported_claims=[],
+        )
+
 
 @pytest.mark.asyncio
 async def test_report_generation_checkpoint():
@@ -58,12 +77,13 @@ async def test_report_generation_checkpoint():
     ]
 
     graph = build_research_graph(
-        evaluation_service=FakeEvaluationService(),
-        llm_provider=None,
-        synthesizer=FakeSynthesizer(),
-        citation_service=CitationService(),
-        report_service=ReportService(),
-    )
+    evaluation_service=FakeEvaluationService(),
+    llm_provider=None,
+    synthesizer=FakeSynthesizer(),
+    citation_service=CitationService(),
+    report_service=ReportService(),
+    report_evaluator=FakeReportEvaluator(),
+)
 
     initial_state: ResearchState = {
         "question": "Does PostgreSQL support vector search?",

@@ -131,15 +131,60 @@ def build_report(
     }
 
 
-def evaluate_report(
+async def evaluate_report(
     state: ResearchState,
+    evaluator: Any,
+    llm_provider: Any,
 ) -> dict[str, Any]:
-    print("[evaluate_report] → initializing report evaluation")
+    print("[evaluate_report] → evaluating generated report")
+
+    report = state.get("report")
+
+    if report is None:
+        raise ValueError("Cannot evaluate a missing report.")
+
+    evaluation = await evaluator.evaluate(
+        question=state["question"],
+        report=report,
+        evidence=state.get("evidence", []),
+        llm_provider=llm_provider,
+    )
+
+    current_iteration = state.get(
+        "evaluation_iteration",
+        0,
+    )
 
     return {
-        "report": state.get("report"),
+        "report_evaluation": evaluation,
+        "evaluation_iteration": current_iteration + 1,
     }
+def route_after_report_evaluation(
+    state: ResearchState,
+    max_evaluation_iterations: int,
+) -> str:
+    """Route based on report quality with a bounded retry loop."""
 
+    evaluation = state.get("report_evaluation")
+
+    if evaluation is None:
+        raise ValueError("Report evaluation is missing.")
+
+    current_iteration = state.get(
+        "evaluation_iteration",
+        0,
+    )
+
+    # Accept a sufficiently grounded report.
+    if evaluation.score >= 4:
+        return "finalize_report"
+
+    # Stop retrying once the maximum number of evaluations is reached.
+    if current_iteration >= max_evaluation_iterations:
+        return "finalize_report"
+
+    # Low-quality report → perform another research iteration.
+    return "execute_tasks"
 
 def finalize_report(
     state: ResearchState,
@@ -166,6 +211,8 @@ def build_research_graph(
     synthesizer: Any,
     citation_service: Any,
     report_service: ReportService,
+    report_evaluator: Any,
+    max_evaluation_iterations: int = 2,
 ):
     graph = StateGraph(ResearchState)
 
@@ -189,8 +236,6 @@ def build_research_graph(
         collect_evidence,
     )
 
-    # IMPORTANT:
-    # These are actual async node functions.
     async def evaluate_sources_node(
         state: ResearchState,
     ) -> dict[str, Any]:
@@ -207,6 +252,15 @@ def build_research_graph(
             state,
             synthesizer,
             citation_service,
+            llm_provider,
+        )
+
+    async def evaluate_report_node(
+        state: ResearchState,
+    ) -> dict[str, Any]:
+        return await evaluate_report(
+            state,
+            report_evaluator,
             llm_provider,
         )
 
@@ -235,7 +289,7 @@ def build_research_graph(
 
     graph.add_node(
         "evaluate_report",
-        evaluate_report,
+        evaluate_report_node,
     )
 
     graph.add_node(
@@ -286,7 +340,7 @@ def build_research_graph(
     )
 
     # ---------------------------------------------------------------
-    # Synthesis → Citations → Report
+    # Synthesis → Citations → Report → Evaluation
     # ---------------------------------------------------------------
 
     graph.add_edge(
@@ -304,9 +358,22 @@ def build_research_graph(
         "evaluate_report",
     )
 
-    graph.add_edge(
+    def route_report_evaluation(
+        state: ResearchState,
+    ) -> str:
+        return route_after_report_evaluation(
+            state,
+            max_evaluation_iterations,
+        )
+
+
+    graph.add_conditional_edges(
         "evaluate_report",
-        "finalize_report",
+        route_report_evaluation,
+        {
+            "finalize_report": "finalize_report",
+            "execute_tasks": "execute_tasks",
+        },
     )
 
     graph.add_edge(

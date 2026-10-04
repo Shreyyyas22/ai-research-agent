@@ -129,3 +129,22 @@ class ResearchReport(BaseModel):
         min_length=1,
         max_length=50,
     )
+
+class ReportEvaluation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    grounded: bool
+    citation_correct: bool
+    hallucination_detected: bool
+
+    score: int = Field(
+        ge=1,
+        le=5,
+    )
+
+    reasoning: str
+
+    unsupported_claims: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
