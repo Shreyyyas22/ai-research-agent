@@ -23,28 +23,72 @@ def build_production_research_graph(
     research_id: str,
     job_store: RedisJobStore,
 ):
-    """Build the production graph after validating required credentials."""
+    """Build the production graph with Groq→Gemini fallback on daily quota."""
     llm_provider_name = os.getenv("LLM_PROVIDER", "groq").lower()
-    if llm_provider_name == "gemini":
-        required_keys = ("GEMINI_API_KEY", "TAVILY_API_KEY")
-        provider_label = "Gemini"
-    else:
-        required_keys = ("GROQ_API_KEY", "TAVILY_API_KEY")
-        provider_label = "Groq"
-        llm_provider_name = "groq"
 
-    missing = [name for name in required_keys if not os.getenv(name)]
-    if missing:
-        raise ValueError(
-            f"Missing required research credentials for {provider_label}: " + ", ".join(missing)
-        )
+    has_groq = bool(os.getenv("GROQ_API_KEY"))
+    has_gemini = bool(os.getenv("GEMINI_API_KEY"))
+    has_tavily = bool(os.getenv("TAVILY_API_KEY"))
 
     if llm_provider_name == "gemini":
+        missing = []
+        if not has_gemini:
+            missing.append("GEMINI_API_KEY")
+        if not has_tavily:
+            missing.append("TAVILY_API_KEY")
+        if missing:
+            raise ValueError("Missing required research credentials: " + ", ".join(missing))
         from app.llm.gemini import GeminiProvider
 
         llm_provider = GeminiProvider()
+    elif llm_provider_name == "auto":
+        # Auto: prefer Groq, fallback to Gemini on daily quota if both keys present
+        if not has_groq and not has_gemini:
+            missing = []
+            if not has_groq:
+                missing.append("GROQ_API_KEY")
+            if not has_gemini:
+                missing.append("GEMINI_API_KEY")
+            if not has_tavily:
+                missing.append("TAVILY_API_KEY")
+            raise ValueError("Missing required research credentials: " + ", ".join(missing))
+        if not has_tavily:
+            raise ValueError("Missing required research credentials: TAVILY_API_KEY")
+        if has_groq and has_gemini:
+            from app.llm.fallback import FallbackProvider
+            from app.llm.gemini import GeminiProvider
+
+            llm_provider = FallbackProvider(GroqProvider(), GeminiProvider())
+        elif has_groq:
+            llm_provider = GroqProvider()
+        else:
+            from app.llm.gemini import GeminiProvider
+
+            llm_provider = GeminiProvider()
     else:
-        llm_provider = GroqProvider()
+        # groq (default) with optional fallback to gemini
+        missing = []
+        if not has_tavily:
+            missing.append("TAVILY_API_KEY")
+        # For default groq, require GROQ unless GEMINI fallback is explicitly intended
+        # But to keep backward compat with existing test, require GROQ
+        if not has_groq:
+            missing.append("GROQ_API_KEY")
+        if missing:
+            raise ValueError("Missing required research credentials: " + ", ".join(missing))
+        if has_groq and has_gemini:
+            from app.llm.fallback import FallbackProvider
+            from app.llm.gemini import GeminiProvider
+
+            llm_provider = FallbackProvider(GroqProvider(), GeminiProvider())
+        elif has_groq:
+            llm_provider = GroqProvider()
+        elif has_gemini:
+            from app.llm.gemini import GeminiProvider
+
+            llm_provider = GeminiProvider()
+        else:
+            raise ValueError("Missing required research credentials for Groq: GROQ_API_KEY")
     search_provider = TavilySearchProvider()
 
     researcher = Researcher(
