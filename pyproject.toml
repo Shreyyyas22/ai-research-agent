@@ -11,11 +11,17 @@ dependencies = [
     "pydantic>=2",
     "python-dotenv>=1",
     "asyncpg>=0.30.0",
-    "sentence-transformers>=6.1.0",
     "langgraph>=1.2.12",
     "alembic>=1.20.0",
     "psycopg[binary]>=3.3.6",
     "redis>=8.1.0",
+    "uvicorn[standard]>=0.54.0",
+    "fastapi>=0.142.2",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    "sentence-transformers>=6.1.0",
 ]
 
 [build-system]
@@ -25,7 +31,37 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "sentence-transformers>=6.1.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/embeddings/sentence_transformer.py", "app/tools/fake.py", "app/config.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

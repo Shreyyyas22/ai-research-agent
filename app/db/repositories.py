@@ -57,6 +57,28 @@ class ResearchJobRepository:
 
         return dict(row)
 
+    async def claim_next_pending(self) -> uuid.UUID | None:
+        """Atomically claim the next pending job for a worker."""
+
+        async with self.pool.acquire() as connection:
+            job_id = await connection.fetchval(
+                """
+                UPDATE research_jobs
+                SET status = 'running'
+                WHERE id = (
+                    SELECT id
+                    FROM research_jobs
+                    WHERE status = 'pending'
+                    ORDER BY created_at ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING id
+                """
+            )
+
+        return job_id
+
     async def update_status(
         self,
         job_id: uuid.UUID,

@@ -1,6 +1,8 @@
+
 import pytest
 
 from app.agents.graph import build_research_graph
+from app.agents.researcher import Researcher
 from app.schemas.research import (
     Evidence,
     ReportEvaluation,
@@ -9,7 +11,10 @@ from app.schemas.research import (
     SynthesizedClaim,
 )
 from app.services.citation_service import CitationService
+from app.services.research_service import ResearchService
 from app.services.report_service import ReportService
+from app.tools.fake_provider import FakeSearchProvider
+from app.tools.web_search import WebSearchTool
 
 
 class FakeEvaluationService:
@@ -31,6 +36,21 @@ class FakeEvaluationService:
                 missing_information=[],
             ),
             conflicts=[],
+        )
+
+
+class FakePlanner:
+    async def create_plan(self, question):
+        from app.schemas.research import ResearchPlan, ResearchTask
+
+        return ResearchPlan(
+            tasks=[
+                ResearchTask(
+                    question=question,
+                    search_queries=["test query"],
+                    priority=1,
+                )
+            ]
         )
 
 
@@ -72,7 +92,6 @@ class FakeReportEvaluator:
         ]
 
         self.call_count += 1
-
         return evaluation
 
 
@@ -108,6 +127,29 @@ def build_initial_state() -> dict:
     }
 
 
+def build_test_graph(report_evaluator):
+    researcher = Researcher(
+        tools={
+            "web_search": WebSearchTool(
+                FakeSearchProvider()
+            )
+        }
+    )
+
+    return build_research_graph(
+        researcher=researcher,
+        research_service=ResearchService(),
+        planner=FakePlanner(),
+        evaluation_service=FakeEvaluationService(),
+        llm_provider=None,
+        synthesizer=FakeSynthesizer(),
+        citation_service=CitationService(),
+        report_service=ReportService(),
+        report_evaluator=report_evaluator,
+        max_evaluation_iterations=2,
+    )
+
+
 @pytest.mark.asyncio
 async def test_unsupported_claim_is_flagged_by_report_evaluator():
     unsupported_claim = ReportEvaluation(
@@ -140,26 +182,14 @@ async def test_unsupported_claim_is_flagged_by_report_evaluator():
         ]
     )
 
-    graph = build_research_graph(
-        evaluation_service=FakeEvaluationService(),
-        llm_provider=None,
-        synthesizer=FakeSynthesizer(),
-        citation_service=CitationService(),
-        report_service=ReportService(),
-        report_evaluator=report_evaluator,
-        max_evaluation_iterations=2,
-    )
+    graph = build_test_graph(report_evaluator)
 
-    result = await graph.ainvoke(
-        build_initial_state()
-    )
+    result = await graph.ainvoke(build_initial_state())
 
     assert report_evaluator.call_count == 2
-
     assert result["report_evaluation"].grounded is True
     assert result["report_evaluation"].hallucination_detected is False
     assert result["report_evaluation"].score == 5
-
     assert result["evaluation_iteration"] == 2
 
 
@@ -184,19 +214,9 @@ async def test_report_evaluation_stops_at_max_iterations():
         ]
     )
 
-    graph = build_research_graph(
-        evaluation_service=FakeEvaluationService(),
-        llm_provider=None,
-        synthesizer=FakeSynthesizer(),
-        citation_service=CitationService(),
-        report_service=ReportService(),
-        report_evaluator=report_evaluator,
-        max_evaluation_iterations=2,
-    )
+    graph = build_test_graph(report_evaluator)
 
-    result = await graph.ainvoke(
-        build_initial_state()
-    )
+    result = await graph.ainvoke(build_initial_state())
 
     assert report_evaluator.call_count == 2
     assert result["evaluation_iteration"] == 2

@@ -1,0 +1,132 @@
+[
+  {
+    "id": "vec-001",
+    "question": "Does PostgreSQL support vector search?",
+    "category": "vector_db",
+    "expected_claims": [
+      "PostgreSQL supports vector search",
+      "pgvector extension"
+    ],
+    "expected_citation_count": 1,
+    "must_contain_keywords": ["PostgreSQL", "vector"],
+    "min_evidence": 1,
+    "difficulty": "easy"
+  },
+  {
+    "id": "vec-002",
+    "question": "What are the trade-offs between pgvector and dedicated vector databases?",
+    "category": "vector_db",
+    "expected_claims": [
+      "pgvector integrates with relational data",
+      "dedicated vector databases scale"
+    ],
+    "expected_citation_count": 2,
+    "must_contain_keywords": ["pgvector", "vector database"],
+    "min_evidence": 2,
+    "difficulty": "medium"
+  },
+  {
+    "id": "rag-001",
+    "question": "How does hybrid retrieval with BM25 and vector search improve RAG?",
+    "category": "retrieval",
+    "expected_claims": [
+      "hybrid retrieval combines lexical and semantic",
+      "RRF fuses rankings"
+    ],
+    "expected_citation_count": 2,
+    "must_contain_keywords": ["hybrid", "BM25", "vector"],
+    "min_evidence": 2,
+    "difficulty": "medium"
+  },
+  {
+    "id": "rag-002",
+    "question": "What is the role of reranking in retrieval pipelines?",
+    "category": "retrieval",
+    "expected_claims": [
+      "reranking refines initial retrieval",
+      "cross-encoder improves relevance"
+    ],
+    "expected_citation_count": 1,
+    "must_contain_keywords": ["rerank"],
+    "min_evidence": 1,
+    "difficulty": "easy"
+  },
+  {
+    "id": "cite-001",
+    "question": "Can PostgreSQL store embeddings for semantic search?",
+    "category": "citation_grounding",
+    "expected_claims": [
+      "PostgreSQL can store embeddings",
+      "vector type stores embeddings"
+    ],
+    "expected_citation_count": 1,
+    "must_contain_keywords": ["embedding", "PostgreSQL"],
+    "min_evidence": 1,
+    "difficulty": "easy"
+  },
+  {
+    "id": "conf-001",
+    "question": "Do vector databases guarantee exact nearest neighbor search?",
+    "category": "conflicting_evidence",
+    "expected_claims": [
+      "approximate nearest neighbor trades accuracy for speed",
+      "exact search is expensive"
+    ],
+    "expected_citation_count": 2,
+    "must_contain_keywords": ["approximate", "exact"],
+    "min_evidence": 2,
+    "difficulty": "hard"
+  },
+  {
+    "id": "ground-001",
+    "question": "Does pgvector support HNSW indexing?",
+    "category": "grounding",
+    "expected_claims": [
+      "pgvector supports HNSW",
+      "HNSW enables fast approximate search"
+    ],
+    "expected_citation_count": 1,
+    "must_contain_keywords": ["HNSW", "pgvector"],
+    "min_evidence": 1,
+    "difficulty": "medium"
+  },
+  {
+    "id": "cov-001",
+    "question": "How does chunking affect retrieval quality in RAG systems?",
+    "category": "coverage",
+    "expected_claims": [
+      "chunk size affects context",
+      "overlapping chunks preserve continuity"
+    ],
+    "expected_citation_count": 2,
+    "must_contain_keywords": ["chunk", "retrieval"],
+    "min_evidence": 2,
+    "difficulty": "medium"
+  },
+  {
+    "id": "cite-002",
+    "question": "What are the limitations of current RAG evaluation methods?",
+    "category": "citation_grounding",
+    "expected_claims": [
+      "relevance is subjective",
+      "citation correctness requires evidence support"
+    ],
+    "expected_citation_count": 1,
+    "must_contain_keywords": ["evaluation", "citation"],
+    "min_evidence": 1,
+    "difficulty": "hard"
+  },
+  {
+    "id": "rel-001",
+    "question": "How to evaluate whether generated claims are grounded in retrieved evidence?",
+    "category": "relevance",
+    "expected_claims": [
+      "groundedness checks claim support",
+      "unsupported claims indicate hallucination"
+    ],
+    "expected_citation_count": 1,
+    "must_contain_keywords": ["grounded", "evidence"],
+    "min_evidence": 1,
+    "difficulty": "hard"
+  }
+]

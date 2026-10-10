@@ -1,6 +1,8 @@
+
 import pytest
 
 from app.agents.graph import build_research_graph
+from app.agents.researcher import Researcher
 from app.agents.state import ResearchState
 from app.schemas.research import (
     Evidence,
@@ -9,7 +11,19 @@ from app.schemas.research import (
     SynthesizedClaim,
 )
 from app.services.citation_service import CitationService
+from app.services.research_service import ResearchService
 from app.services.report_service import ReportService
+from app.tools.fake_provider import FakeSearchProvider
+from app.tools.web_search import WebSearchTool
+from app.tools.schemas import SearchResponse
+
+
+class EmptySearchProvider:
+    async def search(self, query: str) -> SearchResponse:
+        return SearchResponse(
+            success=True,
+            results=[],
+        )
 
 
 class FakeEvaluationService:
@@ -22,6 +36,21 @@ class FakeEvaluationService:
             conflicts = []
 
         return Evaluation()
+
+
+class FakePlanner:
+    async def create_plan(self, question):
+        from app.schemas.research import ResearchPlan, ResearchTask
+
+        return ResearchPlan(
+            tasks=[
+                ResearchTask(
+                    question=question,
+                    search_queries=["test query"],
+                    priority=1,
+                )
+            ]
+        )
 
 
 class FakeSynthesizer:
@@ -40,6 +69,7 @@ class FakeSynthesizer:
                 )
             ]
         )
+
 
 class FakeReportEvaluator:
     async def evaluate(
@@ -76,14 +106,27 @@ async def test_report_generation_checkpoint():
         )
     ]
 
-    graph = build_research_graph(
-    evaluation_service=FakeEvaluationService(),
-    llm_provider=None,
-    synthesizer=FakeSynthesizer(),
-    citation_service=CitationService(),
-    report_service=ReportService(),
-    report_evaluator=FakeReportEvaluator(),
+    researcher = Researcher(
+    tools={
+        "web_search": WebSearchTool(
+            EmptySearchProvider()
+        )
+    }
 )
+
+    research_service = ResearchService()
+
+    graph = build_research_graph(
+        researcher=researcher,
+        research_service=research_service,
+        planner=FakePlanner(),
+        evaluation_service=FakeEvaluationService(),
+        llm_provider=None,
+        synthesizer=FakeSynthesizer(),
+        citation_service=CitationService(),
+        report_service=ReportService(),
+        report_evaluator=FakeReportEvaluator(),
+    )
 
     initial_state: ResearchState = {
         "question": "Does PostgreSQL support vector search?",

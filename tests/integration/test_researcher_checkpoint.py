@@ -66,7 +66,7 @@ async def test_phase_11_three_task_checkpoint():
     researcher = Researcher(
         tools={"web_search": search_tool},
         max_concurrent_queries=3,
-        max_tool_calls=3,
+        max_tool_calls=10,
         max_execution_time=0.1,
         max_research_tasks=3,
     )

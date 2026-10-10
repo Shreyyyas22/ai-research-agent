@@ -1,13 +1,12 @@
 services:
-
   postgres:
     image: pgvector/pgvector:pg16
     container_name: ai-research-agent-postgres
 
     environment:
-      POSTGRES_USER: research_agent
-      POSTGRES_PASSWORD: research_agent
-      POSTGRES_DB: research_agent
+      POSTGRES_USER: ${POSTGRES_USER:-research_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research_agent}
+      POSTGRES_DB: ${POSTGRES_DB:-research_agent}
 
     ports:
       - "5433:5432"
@@ -36,6 +35,59 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  migrate:
+    build:
+      context: .
+    image: ai-research-agent:local
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-research_agent}:${POSTGRES_PASSWORD:-research_agent}@postgres:5432/${POSTGRES_DB:-research_agent}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: ai-research-agent:local
+    build:
+      context: .
+    command:
+      ["uvicorn", "app.sse_app:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-research_agent}:${POSTGRES_PASSWORD:-research_agent}@postgres:5432/${POSTGRES_DB:-research_agent}
+      REDIS_URL: redis://redis:6379/0
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    image: ai-research-agent:local
+    build:
+      context: .
+    command: ["python", "-m", "app.workers.research_worker"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-research_agent}:${POSTGRES_PASSWORD:-research_agent}@postgres:5432/${POSTGRES_DB:-research_agent}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-1}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:

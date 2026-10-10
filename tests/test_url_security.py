@@ -23,3 +23,13 @@ def test_private_ip_is_blocked() -> None:
 def test_ftp_is_blocked() -> None:
     with pytest.raises(UnsafeURL):
         validate_url("ftp://example.com")
+
+
+def test_embedded_credentials_are_blocked() -> None:
+    with pytest.raises(UnsafeURL, match="credentials"):
+        validate_url("https://user:password@example.com")
+
+
+def test_malformed_url_is_blocked() -> None:
+    with pytest.raises(UnsafeURL, match="Invalid URL"):
+        validate_url("http://[invalid")

@@ -14,3 +14,5 @@ class ResearchState(TypedDict, total=False):
     research_sufficient: bool
     report_evaluation: Any
     evaluation_iteration: int
+    usage_metadata: dict[str, Any]
+    elapsed_seconds: float

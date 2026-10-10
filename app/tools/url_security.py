@@ -8,7 +8,13 @@ class UnsafeURL(Exception):
 
 
 def validate_url(url: str) -> None:
-    parsed = urlparse(url)
+    if not isinstance(url, str) or not url.strip():
+        raise UnsafeURL("URL must be a non-empty string.")
+
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise UnsafeURL("Invalid URL.") from exc
 
     if parsed.scheme not in {"http", "https"}:
         raise UnsafeURL(
@@ -19,6 +25,9 @@ def validate_url(url: str) -> None:
         raise UnsafeURL(
             "URL must contain a hostname."
         )
+
+    if parsed.username or parsed.password:
+        raise UnsafeURL("URLs with embedded credentials are not allowed.")
 
     hostname = parsed.hostname.lower()
 

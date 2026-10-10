@@ -1,8 +1,11 @@
+import logging
+import time
 from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup
 
+from app.observability.logging import log_event
 from app.tools.base import Tool
 from app.tools.url_security import UnsafeURL, validate_url
 
@@ -32,6 +35,44 @@ class WebFetchTool(Tool):
         self,
         input: dict[str, Any],
     ) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        try:
+            result = await self._fetch(input)
+        except Exception:
+            log_event(
+                "tool_call_failed",
+                level=logging.ERROR,
+                logger_name="app.tools.web_fetch",
+                tool="web_fetch",
+                exc_info=True,
+            )
+            raise
+
+        success = bool(result.get("success")) if isinstance(result, dict) else False
+        log_event(
+            "tool_call_completed" if success else "tool_call_failed",
+            level=logging.INFO if success else logging.WARNING,
+            logger_name="app.tools.web_fetch",
+            tool="web_fetch",
+            success=success,
+            duration_seconds=round(time.perf_counter() - started_at, 6),
+            url=result.get("url") if isinstance(result, dict) else None,
+        )
+        return result
+
+    async def _fetch(
+        self,
+        input: dict[str, Any],
+    ) -> dict[str, Any]:
+
+        if not isinstance(input, dict):
+            return {
+                "success": False,
+                "url": "",
+                "title": None,
+                "content": "",
+                "error": "Tool input must be an object.",
+            }
 
         url = input.get("url")
 
@@ -103,6 +144,15 @@ class WebFetchTool(Tool):
                 "title": None,
                 "content": "",
                 "error": "HTTP 404: page not found.",
+            }
+
+        if 300 <= response.status_code < 400:
+            return {
+                "success": False,
+                "url": url,
+                "title": None,
+                "content": "",
+                "error": "Redirects are not allowed.",
             }
 
         if response.status_code >= 400:

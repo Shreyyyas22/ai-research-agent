@@ -11,6 +11,7 @@ class TrackingSearchTool(Tool):
     def __init__(self) -> None:
         self.active_calls = 0
         self.max_active_calls = 0
+        self.total_calls = 0
 
     @property
     def name(self) -> str:
@@ -21,6 +22,7 @@ class TrackingSearchTool(Tool):
         return "Fake search tool for concurrency testing."
 
     async def execute(self, input: dict) -> dict:
+        self.total_calls += 1
         self.active_calls += 1
         self.max_active_calls = max(
             self.max_active_calls,
@@ -40,6 +42,54 @@ class TrackingSearchTool(Tool):
 
 @pytest.mark.asyncio
 async def test_researcher_respects_global_concurrency_limit():
+    search_tool = TrackingSearchTool()
+
+    researcher = Researcher(
+        tools={"web_search": search_tool},
+        max_concurrent_queries=3,
+        max_tool_calls=10,
+        max_research_tasks=3,
+    )
+
+    tasks = [
+        ResearchTask(
+            question="Task 1",
+            search_queries=[
+                "query 1",
+                "query 2",
+                "query 3",
+            ],
+            priority=1,
+        ),
+        ResearchTask(
+            question="Task 2",
+            search_queries=[
+                "query 4",
+                "query 5",
+                "query 6",
+            ],
+            priority=2,
+        ),
+        ResearchTask(
+            question="Task 3",
+            search_queries=[
+                "query 7",
+                "query 8",
+                "query 9",
+            ],
+            priority=3,
+        ),
+    ]
+
+    results = await researcher.execute_tasks(tasks)
+
+    assert len(results) == 3
+    assert search_tool.max_active_calls <= 3
+    assert search_tool.total_calls == 9
+
+
+@pytest.mark.asyncio
+async def test_researcher_respects_max_tool_calls_across_concurrent_tasks():
     search_tool = TrackingSearchTool()
 
     researcher = Researcher(
@@ -82,4 +132,6 @@ async def test_researcher_respects_global_concurrency_limit():
     results = await researcher.execute_tasks(tasks)
 
     assert len(results) == 3
-    assert search_tool.max_active_calls <= 3
+    assert search_tool.total_calls == 5
+    total_returned_results = sum(len(task_res["results"]) for task_res in results)
+    assert total_returned_results == 5

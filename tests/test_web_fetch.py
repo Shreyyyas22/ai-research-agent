@@ -154,3 +154,59 @@ async def test_unsupported_content_type() -> None:
 
     assert result["success"] is False
     assert "content type" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_redirects_are_rejected() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "http://127.0.0.1/admin"},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await WebFetchTool(client=client).execute(
+            {"url": "https://example.com/redirect"}
+        )
+
+    assert result["success"] is False
+    assert result["error"] == "Redirects are not allowed."
+
+
+@pytest.mark.asyncio
+async def test_non_object_tool_input_is_rejected() -> None:
+    result = await WebFetchTool().execute([])
+
+    assert result["success"] is False
+    assert result["error"] == "Tool input must be an object."
+
+
+@pytest.mark.asyncio
+async def test_redirects_are_rejected() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "http://127.0.0.1/admin"},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await WebFetchTool(client=client).execute(
+            {"url": "https://example.com/redirect"}
+        )
+
+    assert result["success"] is False
+    assert result["error"] == "Redirects are not allowed."
+
+
+@pytest.mark.asyncio
+async def test_non_object_tool_input_is_rejected() -> None:
+    result = await WebFetchTool().execute([])
+
+    assert result["success"] is False
+    assert result["error"] == "Tool input must be an object."
