@@ -215,7 +215,16 @@ class ResearchWorker:
                 await asyncio.sleep(poll_interval)
                 continue
 
-            await self.process(str(research_id))
+            try:
+                await self.process(str(research_id))
+            except Exception as exc:
+                # process() records the failed job and re-raises.
+                # Keep the worker alive to handle subsequent jobs.
+                print(
+                    f"[{self.worker_id}] "
+                    f"Continuing after job failure: {exc}"
+                )
+                await asyncio.sleep(poll_interval)
 
 
 async def main() -> None:
