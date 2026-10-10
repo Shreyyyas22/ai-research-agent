@@ -196,7 +196,6 @@ class UsageTracker:
                 bool(records) and len(priced_records) == len(records)
             ),
             "calls": records,
-            
         }
 
 _ACTIVE_USAGE_TRACKER: ContextVar[UsageTracker | None] = ContextVar(

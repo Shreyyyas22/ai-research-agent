@@ -550,7 +550,6 @@ def build_research_graph(
         "collect_evidence",
         observe_node("collect_evidence", collect_evidence_node),
     )
-    
 
     async def evaluate_sources_node(
         state: ResearchState,
