@@ -26,6 +26,9 @@ class RedisJobStore:
         client = redis.from_url(
             get_redis_url(),
             decode_responses=True,
+            socket_connect_timeout=10,
+            socket_timeout=10,
+            retry_on_timeout=False,
         )
 
         return cls(client)
