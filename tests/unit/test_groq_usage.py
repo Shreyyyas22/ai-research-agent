@@ -1,6 +1,8 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
+import groq
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -168,5 +170,98 @@ async def test_provider_raises_error_when_prompt_exceeds_max_context_size():
         await provider.generate(large_message)
 
     assert "exceed MAX_CONTEXT_SIZE" in str(exc_info.value)
+
+
+def _make_rate_limit_error(message: str, retry_after: str | None = None) -> groq.RateLimitError:
+    headers = {"retry-after": retry_after} if retry_after else {}
+    response = httpx.Response(429, headers=headers, request=httpx.Request("POST", "https://api.groq.com"))
+    return groq.RateLimitError(message=message, response=response, body=None)
+
+
+def _make_server_error() -> groq.InternalServerError:
+    response = httpx.Response(503, request=httpx.Request("POST", "https://api.groq.com"))
+    return groq.InternalServerError(message="Service unavailable", response=response, body=None)
+
+
+def _make_bad_request_error() -> groq.APIStatusError:
+    response = httpx.Response(400, request=httpx.Request("POST", "https://api.groq.com"))
+    return groq.APIStatusError(message="Bad request", response=response, body=None)
+
+
+@pytest.mark.asyncio
+async def test_transient_rate_limit_retries_then_succeeds():
+    provider = make_provider()
+    error = _make_rate_limit_error("Rate limit reached for model", retry_after="1")
+    provider.client.chat.completions.create.side_effect = [error, make_response("ok")]
+
+    with patch("app.llm.groq.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        result = await provider.generate([{"role": "user", "content": "Hi"}])
+
+    assert result == "ok"
+    assert provider.client.chat.completions.create.call_count == 2
+    mock_sleep.assert_called_once()
+    # first retry: 1 * 2**0 = 1
+    assert mock_sleep.call_args[0][0] == 1.0
+    assert provider.usage_tracker.snapshot()["llm_calls"] == 2
+    assert provider.usage_tracker.snapshot()["failed_llm_calls"] == 1
+    assert provider.usage_tracker.snapshot()["successful_llm_calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_three_transient_failures_raise_after_three_attempts():
+    provider = make_provider()
+    error = _make_rate_limit_error("Rate limit reached", retry_after="1")
+    provider.client.chat.completions.create.side_effect = [error, error, error]
+
+    with patch("app.llm.groq.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(groq.RateLimitError):
+            await provider.generate([{"role": "user", "content": "Hi"}])
+
+    assert provider.client.chat.completions.create.call_count == 3
+    assert provider.usage_tracker.snapshot()["failed_llm_calls"] == 3
+
+
+@pytest.mark.asyncio
+async def test_daily_quota_exhausted_fails_fast_without_retry():
+    provider = make_provider()
+    error = _make_rate_limit_error("Rate limit reached for model: tokens per day Limit 200000", retry_after="10")
+    provider.client.chat.completions.create.side_effect = error
+
+    with patch("app.llm.groq.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with pytest.raises(groq.RateLimitError):
+            await provider.generate([{"role": "user", "content": "Hi"}])
+
+    assert provider.client.chat.completions.create.call_count == 1
+    mock_sleep.assert_not_called()
+    assert provider.usage_tracker.snapshot()["failed_llm_calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_400_fails_immediately():
+    provider = make_provider()
+    error = _make_bad_request_error()
+    provider.client.chat.completions.create.side_effect = error
+
+    with patch("app.llm.groq.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with pytest.raises(groq.APIStatusError):
+            await provider.generate([{"role": "user", "content": "Hi"}])
+
+    assert provider.client.chat.completions.create.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_backoff_is_capped_at_ten_seconds():
+    provider = make_provider()
+    error = _make_rate_limit_error("Rate limit", retry_after="8")
+    provider.client.chat.completions.create.side_effect = [error, error, make_response("ok")]
+
+    with patch("app.llm.groq.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        result = await provider.generate([{"role": "user", "content": "Hi"}])
+
+    assert result == "ok"
+    # attempt 0: 8*1=8, attempt1: 8*2=16 -> capped to 10
+    assert mock_sleep.call_args_list[0][0][0] == 8.0
+    assert mock_sleep.call_args_list[1][0][0] == 10.0
 
 

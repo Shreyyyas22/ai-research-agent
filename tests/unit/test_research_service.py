@@ -140,3 +140,27 @@ def test_collect_sources_ignores_invalid_results():
 
     assert len(sources) == 1
     assert sources[0].title == "Valid Article"
+
+
+def test_collect_sources_caps_at_ten_sources():
+    search_results = [
+        {
+            "success": True,
+            "results": [
+                {
+                    "title": f"Article {i}",
+                    "url": f"https://example.com/article-{i}",
+                    "snippet": f"Snippet {i}",
+                }
+                for i in range(15)
+            ],
+        }
+    ]
+
+    service = ResearchService()
+
+    sources = service.collect_sources(search_results)
+
+    assert len(sources) == 10
+    assert sources[0].url == "https://example.com/article-0"
+    assert sources[9].url == "https://example.com/article-9"

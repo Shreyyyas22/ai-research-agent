@@ -118,7 +118,8 @@ class ResearchService:
                     )
                 )
 
-        return deduplicate_sources(sources)
+        # Cap to 10 sources per job to bound downstream LLM calls and stay within free-tier TPM
+        return deduplicate_sources(sources)[:10]
 
     async def extract_evidence(
         self,
@@ -130,6 +131,8 @@ class ResearchService:
 
         if not content.strip():
             return []
+
+        content = content[:6000]
 
         messages = [
             {
@@ -161,10 +164,26 @@ class ResearchService:
             },
         ]
 
-        result = await llm_provider.generate_structured(
-            messages=messages,
-            response_model=EvidenceExtraction,
-        )
+        try:
+            result = await llm_provider.generate_structured(
+                messages=messages,
+                response_model=EvidenceExtraction,
+            )
+        except Exception as exc:
+            # One source failing JSON validation should not fail the whole research job.
+            # The model sometimes returns empty failed_generation on strict json_schema.
+            import logging
+
+            from app.observability.logging import log_event
+
+            log_event(
+                "evidence_extraction_failed",
+                level=logging.WARNING,
+                logger_name="app.services.research_service",
+                source_url=source.url,
+                error_type=type(exc).__name__,
+            )
+            return []
 
         return [
             Evidence(

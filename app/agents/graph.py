@@ -161,7 +161,8 @@ async def collect_evidence(
         for item in evidence
     }
 
-    for source in state.get("sources", []):
+    # Limit to first 5 new sources to stay within free-tier TPM and keep smoke test fast
+    for source in list(state.get("sources", []))[:5]:
         if source.url in extracted_source_urls:
             continue
 

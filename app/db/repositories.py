@@ -340,6 +340,72 @@ class ReportRepository:
 
         return report_id
 
+    async def create_with_evaluation(
+        self,
+        *,
+        job_id: uuid.UUID,
+        report_data: dict[str, Any],
+        evaluation_data: dict[str, Any],
+        iteration: int,
+    ) -> uuid.UUID:
+        report_id = uuid.uuid4()
+        evaluation_id = uuid.uuid4()
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    """
+                    INSERT INTO reports (
+                        id,
+                        job_id,
+                        title,
+                        executive_summary,
+                        key_findings,
+                        detailed_analysis,
+                        conclusion,
+                        trade_offs,
+                        limitations
+                    )
+                    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9::jsonb)
+                    """,
+                    report_id,
+                    job_id,
+                    report_data["title"],
+                    report_data["executive_summary"],
+                    json.dumps(report_data["key_findings"]),
+                    report_data["detailed_analysis"],
+                    report_data["conclusion"],
+                    json.dumps(report_data["trade_offs"]),
+                    json.dumps(report_data["limitations"]),
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO report_evaluations (
+                        id,
+                        job_id,
+                        report_id,
+                        iteration,
+                        grounded,
+                        citation_correct,
+                        hallucination_detected,
+                        score,
+                        reasoning,
+                        unsupported_claims
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+                    """,
+                    evaluation_id,
+                    job_id,
+                    report_id,
+                    iteration,
+                    evaluation_data["grounded"],
+                    evaluation_data["citation_correct"],
+                    evaluation_data["hallucination_detected"],
+                    evaluation_data["score"],
+                    evaluation_data["reasoning"],
+                    json.dumps(evaluation_data["unsupported_claims"]),
+                )
+                return report_id
+
     async def get_by_job_id(
         self,
         job_id: uuid.UUID,

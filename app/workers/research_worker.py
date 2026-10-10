@@ -4,9 +4,14 @@ import asyncio
 import os
 from uuid import UUID
 
+from app.agents.production_factory import build_production_research_graph
 from app.db.postgres import create_pool
 from app.db.redis import RedisJobStore
-from app.db.repositories import ResearchJobRepository
+from app.db.repositories import (
+    ReportEvaluationRepository,
+    ReportRepository,
+    ResearchJobRepository,
+)
 
 
 class ResearchWorker:
@@ -24,10 +29,14 @@ class ResearchWorker:
         self,
         job_store: RedisJobStore,
         job_repository: ResearchJobRepository,
+        report_repository: ReportRepository | None = None,
+        report_evaluation_repository: ReportEvaluationRepository | None = None,
         worker_id: str = "research-worker-1",
     ) -> None:
         self.job_store = job_store
         self.job_repository = job_repository
+        self.report_repository = report_repository
+        self.report_evaluation_repository = report_evaluation_repository
         self.worker_id = worker_id
 
     async def update_progress(
@@ -66,140 +75,57 @@ class ResearchWorker:
         self,
         research_id: str,
     ) -> None:
-        """
-        Process one research job.
-        """
+        from uuid import UUID
 
-        job_uuid = UUID(research_id)
+        job_uuid = UUID(str(research_id))
 
         try:
-            # ---------------------------------------------------------
-            # Job started
-            # ---------------------------------------------------------
-
-            await self.job_repository.update_status(
-                job_uuid,
-                "running",
+            job = await self.job_repository.get_by_id(job_uuid)
+            if job is None:
+                raise ValueError(f"Research job not found: {research_id}")
+            question = job["question"]
+            if not question or not question.strip():
+                raise ValueError("Research job has an empty question")
+            await self.job_repository.update_status(job_uuid, "running")
+            await self.update_progress(research_id, "running", "starting")
+            graph = build_production_research_graph(
+                research_id=str(research_id),
+                job_store=self.job_store,
             )
-
-            await self.update_progress(
-                research_id,
-                "running",
-                "starting",
-            )
-
-            print(
-                f"[{self.worker_id}] "
-                f"Started research job {research_id}"
-            )
-
-            # ---------------------------------------------------------
-            # Planning
-            # ---------------------------------------------------------
-
-            await self.update_progress(
-                research_id,
-                "running",
-                "planning",
-            )
-
-            print(
-                f"[{self.worker_id}] "
-                f"{research_id}: planning"
-            )
-
-            await asyncio.sleep(1)
-
-            # ---------------------------------------------------------
-            # Researching
-            # ---------------------------------------------------------
-
-            await self.update_progress(
-                research_id,
-                "running",
-                "researching",
-            )
-
-            print(
-                f"[{self.worker_id}] "
-                f"{research_id}: researching"
-            )
-
-            await asyncio.sleep(2)
-
-            # ---------------------------------------------------------
-            # Synthesizing
-            # ---------------------------------------------------------
-
-            await self.update_progress(
-                research_id,
-                "running",
-                "synthesizing",
-            )
-
-            print(
-                f"[{self.worker_id}] "
-                f"{research_id}: synthesizing"
-            )
-
-            await asyncio.sleep(1)
-
-            # ---------------------------------------------------------
-            # Completed
-            # ---------------------------------------------------------
-
-            await self.job_repository.update_status(
-                job_uuid,
-                "completed",
-                completed=True,
-            )
-
-            await self.update_progress(
-                research_id,
-                "completed",
-                "completed",
-            )
-
-            print(
-                f"[{self.worker_id}] "
-                f"Completed research job {research_id}"
-            )
-
+            result = await graph.ainvoke({"question": question})
+            report = result.get("report")
+            evaluation = result.get("report_evaluation")
+            if report is None:
+                raise ValueError("Research graph returned no report")
+            if evaluation is None:
+                raise ValueError("Research graph returned no report evaluation")
+            if self.report_repository is not None:
+                report_data = report.model_dump(mode="json")
+                evaluation_data = evaluation.model_dump(mode="json")
+                await self.report_repository.create_with_evaluation(
+                    job_id=job_uuid,
+                    report_data=report_data,
+                    evaluation_data=evaluation_data,
+                    iteration=result.get("evaluation_iteration", 1),
+                )
+            await self.job_repository.update_status(job_uuid, "completed", completed=True)
+            await self.update_progress(research_id, "completed", "completed")
         except Exception as exc:
-            # ---------------------------------------------------------
-            # Failed
-            # ---------------------------------------------------------
-
-            await self.job_repository.update_status(
-                job_uuid,
-                "failed",
-            )
-
-            error_state = {
-                "status": "failed",
-                "progress": "failed",
-                "worker_id": self.worker_id,
-                "error": str(exc),
-            }
-
-            await self.job_store.set_state(
-                research_id,
-                error_state,
-            )
-
-            await self.job_store.publish_event(
-                research_id,
-                {
-                    "type": "error",
-                    **error_state,
-                },
-            )
-
-            print(
-                f"[{self.worker_id}] "
-                f"Research job {research_id} failed: {exc}"
-            )
-
+            try:
+                await self.job_repository.update_status(job_uuid, "failed")
+            except Exception as status_exc:
+                print(f"Could not mark research job failed: {status_exc}")
+            try:
+                await self.job_store.publish_event(
+                    str(research_id),
+                    {
+                        "type": "error",
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                )
+            except Exception as redis_exc:
+                print(f"Could not publish research failure: {redis_exc}")
             raise
 
     async def run_forever(
@@ -241,13 +167,15 @@ async def main() -> None:
     pool = await create_pool()
     job_store = RedisJobStore.from_env()
 
-    job_repository = ResearchJobRepository(
-        pool
-    )
+    job_repository = ResearchJobRepository(pool)
+    report_repository = ReportRepository(pool)
+    report_evaluation_repository = ReportEvaluationRepository(pool)
 
     worker = ResearchWorker(
         job_store=job_store,
         job_repository=job_repository,
+        report_repository=report_repository,
+        report_evaluation_repository=report_evaluation_repository,
         worker_id="research-worker-1",
     )
 

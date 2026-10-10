@@ -1,8 +1,11 @@
+import asyncio
 import logging
 import os
+import re
 import time
 from typing import Any, cast
 
+import groq
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from pydantic import BaseModel, ValidationError
@@ -25,6 +28,32 @@ def estimate_prompt_tokens(messages: list[dict[str, str]]) -> int:
     """Estimate total prompt tokens for a list of chat messages."""
     total_chars = sum(len(m.get("content", "")) for m in messages)
     return max(1, total_chars // 4)
+
+
+def _is_daily_quota_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "tokens per day",
+            "requests per day",
+            "daily token limit",
+            "daily quota",
+            "quota exceeded",
+        )
+    )
+
+
+def _retry_after_seconds(exc: Exception) -> float:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    value = headers.get("retry-after")
+    if value is None:
+        return 2.0
+    try:
+        return min(10.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 2.0
 
 
 class GroqProvider:
@@ -67,7 +96,7 @@ class GroqProvider:
         request: dict[str, Any],
         operation: str,
     ) -> Any:
-        """Execute and measure one API request."""
+        """Execute and measure one API request with bounded retries."""
         max_context = getattr(self, "max_context_size", None)
         messages = request.get("messages", [])
 
@@ -94,65 +123,73 @@ class GroqProvider:
                 )
 
         tracker = get_active_usage_tracker() or self.usage_tracker
-        # Enforce the limit before sending a request to Groq.
-        tracker.reserve_call()
-        started_at = time.perf_counter()
-        # Prompt text stays out of the log. Token counts are recorded after the call.
-        log_event(
-            "llm_request_started",
-            logger_name="app.llm",
-            operation=operation,
-            model=self.model,
-        )
 
-        try:
-            response = await self.client.chat.completions.create(
-                **cast(Any, request)
+        for attempt in range(3):
+            tracker.reserve_call()
+            started_at = time.perf_counter()
+            log_event(
+                "llm_request_started",
+                logger_name="app.llm",
+                operation=operation,
+                model=self.model,
             )
-        except Exception:
+            try:
+                response = await self.client.chat.completions.create(
+                    **cast(Any, request)
+                )
+            except Exception as exc:
+                duration = time.perf_counter() - started_at
+                tracker.record(
+                    operation=operation,
+                    model=self.model,
+                    duration_seconds=duration,
+                    succeeded=False,
+                )
+                log_event(
+                    "llm_request_failed",
+                    level=logging.ERROR,
+                    logger_name="app.llm",
+                    operation=operation,
+                    model=self.model,
+                    duration_seconds=round(duration, 6),
+                    exc_info=True,
+                )
+                retryable = isinstance(exc, groq.RateLimitError) or isinstance(
+                    exc, groq.InternalServerError
+                )
+                if not retryable or _is_daily_quota_error(exc) or attempt == 2:
+                    raise
+                delay = _retry_after_seconds(exc) * (2**attempt)
+                await asyncio.sleep(min(10.0, delay))
+                continue
+
             duration = time.perf_counter() - started_at
+            usage = getattr(response, "usage", None)
+
+            prompt_tokens = getattr(usage, "prompt_tokens", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+
             tracker.record(
                 operation=operation,
                 model=self.model,
                 duration_seconds=duration,
-                succeeded=False,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                succeeded=True,
             )
             log_event(
-                "llm_request_failed",
-                level=logging.ERROR,
+                "llm_request_completed",
                 logger_name="app.llm",
                 operation=operation,
                 model=self.model,
                 duration_seconds=round(duration, 6),
-                exc_info=True,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             )
-            raise
 
-        duration = time.perf_counter() - started_at
-        usage = getattr(response, "usage", None)
+            return response
 
-        prompt_tokens = getattr(usage, "prompt_tokens", None)
-        completion_tokens = getattr(usage, "completion_tokens", None)
-
-        tracker.record(
-            operation=operation,
-            model=self.model,
-            duration_seconds=duration,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            succeeded=True,
-        )
-        log_event(
-            "llm_request_completed",
-            logger_name="app.llm",
-            operation=operation,
-            model=self.model,
-            duration_seconds=round(duration, 6),
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
-
-        return response
+        raise RuntimeError("Unreachable: retry loop exhausted")
 
     async def generate(
         self,
@@ -183,7 +220,7 @@ class GroqProvider:
             "type": "json_schema",
             "json_schema": {
                 "name": response_model.__name__,
-                "strict": True,
+                "strict": False,
                 "schema": schema,
             },
         }
