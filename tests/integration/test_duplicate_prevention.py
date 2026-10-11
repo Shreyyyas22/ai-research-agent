@@ -14,8 +14,8 @@ async def test_claim_next_pending_is_atomic():
         repo1 = ResearchJobRepository(pool)
         repo2 = ResearchJobRepository(pool)
 
-        # Clean up any existing pending jobs to ensure isolated test
-        await pool.execute("DELETE FROM research_jobs WHERE status='pending' AND question='Duplicate claim test'")
+        # Clean up all pending jobs to ensure isolated test
+        await pool.execute("DELETE FROM research_jobs WHERE status='pending'")
 
         # Create a single pending job
         job_id = await repo1.create(question="Duplicate claim test")
@@ -26,21 +26,15 @@ async def test_claim_next_pending_is_atomic():
             repo2.claim_next_pending(),
         )
 
-        # At least one should have claimed our job, and they should not be the same
-        assert job_id in results or results[0] == job_id or results[1] == job_id
-        # If both claimed something, they should be different (no duplicate)
-        if results[0] is not None and results[1] is not None:
-            assert results[0] != results[1]
-        # If only one claimed, it should be our job (since we cleaned)
-        # The other may have claimed a different pre-existing pending job, which is okay
-        # But they should not both be our job
+        # Exactly one should have claimed our job, the other should be None (since only one pending)
+        assert results.count(job_id) == 1, f"Expected exactly one claim of {job_id}, got {results}"
+        assert results[0] != results[1] or (results[0] is None or results[1] is None)
+        # One should be job_id, the other None
+        assert (results[0] == job_id and results[1] is None) or (results[1] == job_id and results[0] is None)
 
-        # Verify our job is now running (claimed by one worker)
+        # Verify our job is now running
         job = await repo1.get_by_id(job_id)
-        # It should be running if claimed, or still pending if the other worker claimed a different job first
-        # In either case, it should not be pending if it was claimed
-        if job_id in results:
-            assert job["status"] == "running"
+        assert job["status"] == "running"
 
         # Cleanup
         await pool.execute("DELETE FROM report_evaluations WHERE job_id = $1", job_id)
