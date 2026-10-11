@@ -133,12 +133,26 @@ async def get_research_report(research_id: str) -> Any:
         if report is None:
             raise HTTPException(status_code=404, detail="Report not found")
 
-        # Parse key_findings if stored as JSON string
+        # Parse JSON fields if stored as strings
         import json
 
         key_findings = report["key_findings"]
         if isinstance(key_findings, str):
             key_findings = json.loads(key_findings)
+        trade_offs = report["trade_offs"]
+        if isinstance(trade_offs, str):
+            trade_offs = json.loads(trade_offs)
+        limitations = report["limitations"]
+        if isinstance(limitations, str):
+            limitations = json.loads(limitations)
+
+        # Fetch sources for this job
+        from app.db.repositories import SourceRepository
+
+        source_repo = SourceRepository(pool)
+        sources = await source_repo.get_by_job_id(job_uuid)
+        # Also fetch evidence to enrich sources if needed
+        sources_data = [{"title": s["title"], "url": s["url"]} for s in sources]
 
         return {
             "id": str(report["id"]),
@@ -148,9 +162,9 @@ async def get_research_report(research_id: str) -> Any:
             "key_findings": key_findings,
             "detailed_analysis": report["detailed_analysis"],
             "conclusion": report["conclusion"],
-            "trade_offs": report["trade_offs"],
-            "limitations": report["limitations"],
-            "sources": [],  # Sources are stored separately, could be fetched via SourceRepository
+            "trade_offs": trade_offs,
+            "limitations": limitations,
+            "sources": sources_data,
         }
     finally:
         await pool.close()

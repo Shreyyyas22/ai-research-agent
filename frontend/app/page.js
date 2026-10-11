@@ -14,10 +14,14 @@ export default function Home() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
   const eventSourceRef = useRef(null);
+  const pollIntervalRef = useRef(null);
 
   const submitResearch = async (e) => {
     e.preventDefault();
     if (!question.trim()) return;
+    // Clear previous polling/streaming
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    if (eventSourceRef.current) eventSourceRef.current.close();
     setLoading(true);
     setError("");
     setReport(null);
@@ -48,6 +52,7 @@ export default function Home() {
   };
 
   const pollStatus = (id) => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`${API_URL}/research/${id}`);
@@ -56,18 +61,24 @@ export default function Home() {
         setStatus(data.status);
         if (data.status === "completed") {
           clearInterval(interval);
+          pollIntervalRef.current = null;
           fetchReport(id);
           if (eventSourceRef.current) {
             eventSourceRef.current.close();
           }
         } else if (data.status === "failed") {
           clearInterval(interval);
-          setError("Research job failed");
+          pollIntervalRef.current = null;
+          setError("Research job failed — check Render logs for Groq/Tavily rate limits");
           if (eventSourceRef.current) eventSourceRef.current.close();
         }
       } catch {}
     }, 2000);
-    setTimeout(() => clearInterval(interval), 120000);
+    pollIntervalRef.current = interval;
+    setTimeout(() => {
+      clearInterval(interval);
+      if (pollIntervalRef.current === interval) pollIntervalRef.current = null;
+    }, 180000);
   };
 
   const streamProgress = (id) => {
@@ -112,6 +123,7 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) eventSourceRef.current.close();
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, []);
 
