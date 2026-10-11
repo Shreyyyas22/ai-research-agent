@@ -1,121 +1,394 @@
-# AI Research Agent — Bounded, Citation-Grounded
+# AI Research Agent
 
-A production-ready AI research agent that takes a complex research question, plans focused sub-tasks, gathers evidence from the web and internal sources, detects conflicts, synthesizes a citation-grounded report, self-evaluates, and streams progress live. Built for free-tier deployment (Render + Supabase + Upstash + Vercel).
+An AI-powered research system that autonomously investigates questions, searches the web, gathers and evaluates evidence, generates citation-grounded research reports, and evaluates the quality of its output.
 
-**Live:** Frontend `https://ai-research-agent-tau-mauve.vercel.app` → API `https://ai-research-agent-a166.onrender.com` (`GET /health` `200`)
+The project combines LLM orchestration, web search, evidence processing, retrieval infrastructure, PostgreSQL persistence, asynchronous job execution, and a Next.js dashboard to deliver an end-to-end research experience.
 
----
+## Live Demo
+
+- **Frontend:** https://ai-research-agent-tau-mauve.vercel.app/
+- **Backend API:** https://ai-research-agent-a166.onrender.com
+- **Health Check:** https://ai-research-agent-a166.onrender.com/health
+- **Metrics:** https://ai-research-agent-a166.onrender.com/metrics
+
+> Note: The backend runs on Render's free tier and may sleep after inactivity. The first request after an idle period can take longer while the service wakes up.
 
 ## Features
 
-* **Bounded autonomy** — `MAX_LLM_CALLS=50` `MAX_TOOL_CALLS=10` `MAX_RESEARCH_TIME=120` `MAX_AGENT_ITERATIONS=2` `MAX_CONTEXT_SIZE=8192` `app/agents/instrumented_graph.py:33` + `ResearchService.extract_evidence` `content[:6000]` `app/services/research_service.py:134` + `collect_sources()[:10]` + `collect_evidence[:5]` `app/agents/graph.py:164` — no unbounded loops
-* **Grounded synthesis** — `Synthesizer` `app/agents/synthesizer.py:28` + `CitationService` `app/services/citation_service.py:8` `citation_ids ⊆ [1..len(evidence)]` + `ReportService` `app/services/report_service.py:10` → `ResearchReport` `app/schemas/research.py:98`
-* **Self-evaluation loop** — `ReportEvaluator` `app/agents/evaluator.py:48` `grounded/citation_correct/hallucination/score 1-5` with `route_after_report_evaluation` `app/agents/graph.py:399` `score>=4` or `2` iterations → `finalize_report`
-* **Hybrid retrieval** — `pgvector` `pg16` + `BM25` `app/retrieval/bm25.py:59` + `RRF` `app/retrieval/hybrid.py:40` + `Reranker` + `WebFetch` `app/tools/web_fetch.py:13` `validate_url` `app/tools/url_security.py:10`
-* **Observability** — `JSONFormatter` `app/observability/logging.py:88` `run_id/trace_id/node_name` + `redact_secrets` + `Prometheus` `app/observability/metrics.py:17` `research_runs_total|llm_tokens_total|limit_violations` + `Tracing` `app/observability/tracing.py:34` `create_span`
-* **Multi-LLM fallback** — `GroqProvider` `app/llm/groq.py:30` `openai/gpt-oss-20b` + `GeminiProvider` `app/llm/gemini.py:18` `gemini-3.5-flash-lite` `Interactions API` + `FallbackProvider` `app/llm/fallback.py:12` `tokens per day` → `Gemini` (`Tavily` `app/tools/tavily_provider.py:18` via `httpx`)
-* **Atomic persistence** — `ReportRepository.create_with_evaluation` `app/db/repositories.py:343` `pool.acquire()+transaction()` + `ResearchJobRepository` `FOR UPDATE SKIP LOCKED` `app/db/repositories.py:60` + heartbeat `app/workers/research_worker.py:42` `lease_expires_at`
-* **Live progress** — `ResearchProgressPublisher` `app/services/progress_publisher.py:8` `Redis Pub/Sub` `app/db/redis.py:25` `research-events:{id}` → `SSE` `GET /research/{id}/stream` `app/api/sse.py:72`
-* **Frontend** — `Next.js 16 App Router` `frontend/app/page.js:4` `Tailwind` — `POST /research` `GET /research/{id}` `GET /research/{id}/report` `app/api/research.py:12` with `CORS` `app/sse_app.py:6`, `10/min` rate limit, `In Progress` with ETA + `Grab a coffee ☕` messages, report viewer with citations
+### Autonomous Research Workflow
+
+- Accepts natural-language research questions through a REST API.
+- Generates structured research plans using LLMs.
+- Executes research tasks and gathers web sources through Tavily.
+- Extracts, limits, and deduplicates source content.
+- Processes evidence to support research findings.
+- Evaluates sources and synthesizes citation-grounded findings.
+- Generates structured research reports with key findings and citation references.
+- Evaluates completed reports for quality, grounding, and citation correctness.
+
+### LLM Integration and Provider Resilience
+
+- Supports Groq and Google Gemini providers.
+- Implements a shared fallback provider to switch from Groq to Gemini when appropriate.
+- Handles retryable rate-limit and service-unavailable errors with bounded retries.
+- Fails fast for recognized daily-quota exhaustion so unnecessary retries are avoided.
+- Supports provider selection through the `LLM_PROVIDER` configuration.
+- Tracks LLM calls, token usage, duration, and estimated cost where usage information is available.
+
+### Retrieval and Evidence Processing
+
+- PostgreSQL-backed research persistence.
+- pgvector support for embedding storage and vector similarity search.
+- HNSW indexing support for vector retrieval.
+- Hybrid retrieval infrastructure using vector search and BM25/RRF techniques.
+- Bounded source collection and evidence processing to control context size.
+- Prompt-injection and URL-security protections in the web-fetching pipeline.
+
+### Asynchronous Job Processing
+
+- Separates API request handling from research execution.
+- Tracks jobs through pending, running, completed, and failed states.
+- Uses PostgreSQL transactions for atomic report and evaluation persistence.
+- Claims pending jobs atomically using `FOR UPDATE SKIP LOCKED`.
+- Implements worker leases and heartbeats to support abandoned-job recovery.
+- Prioritizes pending work over expired running jobs.
+- Supports progress reporting and server-sent events (SSE).
+- Prevents multiple workers from claiming the same pending job in the tested concurrent-claiming scenario.
+
+### Observability and Operational Reliability
+
+- Structured JSON logging.
+- Prometheus metrics.
+- Trace and run-context instrumentation.
+- LLM and tool-call tracking.
+- Configurable execution timeouts and call limits.
+- Bounded retries and explicit provider-failure handling.
+- Worker supervision and graceful shutdown.
+- API request validation and IP-based request throttling.
+
+### Web Dashboard
+
+The Next.js frontend provides an interface for interacting with the research backend.
+
+- Submit research questions.
+- Receive a research job ID.
+- Track job status and progress.
+- Stream progress events through SSE.
+- Retrieve completed reports.
+- Display key findings and citation references.
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    U[User/Vercel] --> F[Next.js frontend/app/page.js]
-    F -->|POST /research| A[FastAPI app/sse_app.py]
-    A --> R[ResearchJobRepository → research_jobs]
-    A --> S[SSE /research/{id}/stream ← Redis Pub/Sub]
-    W[ResearchWorker app/workers/research_worker.py] -->|claim_next_pending FOR UPDATE SKIP LOCKED| R
-    W --> G[build_production_research_graph app/agents/production_factory.py]
-    G --> P[ResearchPlanner app/agents/planner.py]
-    G --> E[Researcher WebSearchTool(Tavily) + WebFetch]
-    G --> C[collect_evidence → ResearchService.extract_evidence]
-    G --> V[SourceEvaluationService app/services/source_evaluation_service.py]
-    G --> Y[Synthesizer app/agents/synthesizer.py]
-    G --> I[CitationService app/services/citation_service.py]
-    G --> O[ReportService app/services/report_service.py]
-    G --> Q[ReportEvaluator app/agents/evaluator.py]
-    G -->|FallbackProvider| L[Groq → Gemini app/llm/fallback.py]
-    G -->|InstrumentedResearchGraph| T[UsageTracker app/llm/usage.py + ToolCallTracker]
-    W -->|create_with_evaluation transaction| D[(Supabase Postgres + pgvector)]
-    W -->|publish| Redis[(Upstash Redis)]
+```text
+                  User
+                   |
+                   v
+          Next.js Research UI
+                   |
+                   v
+             FastAPI API
+                   |
+           POST /research
+                   |
+                   v
+          PostgreSQL Job Queue
+                   |
+                   v
+          Research Worker
+                   |
+                   v
+          LangGraph Workflow
+                   |
+        +----------+----------+
+        |          |          |
+        v          v          v
+   Research     Tavily      Evidence
+    Planner     Search      Processing
+        |          |          |
+        +----------+----------+
+                   |
+                   v
+          Source Evaluation
+                   |
+                   v
+          Citation-Grounded
+             Synthesis
+                   |
+                   v
+          Report Evaluation
+                   |
+                   v
+       Atomic Report Persistence
+                   |
+           +-------+-------+
+           |               |
+           v               v
+       PostgreSQL        Redis
+           |               |
+           v               v
+      Report API       Live Progress
+           |
+           v
+       Next.js UI
 ```
 
-## Quick Start
+LLM requests are routed through the configured provider abstraction, with Groq-to-Gemini fallback. PostgreSQL stores research jobs and persisted results, while Redis supports progress-related functionality.
+
+## Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| Language | Python 3.12, JavaScript |
+| Backend | FastAPI, Pydantic, async Python |
+| Agent orchestration | LangGraph, LangChain components |
+| LLM providers | Groq, Google Gemini |
+| Web search | Tavily |
+| Database | PostgreSQL, asyncpg, SQLAlchemy/Alembic where applicable |
+| Vector search | pgvector, HNSW |
+| Retrieval | Embeddings, BM25, Reciprocal Rank Fusion (RRF) |
+| Progress and caching infrastructure | Redis, Server-Sent Events |
+| Frontend | Next.js App Router, React |
+| Monitoring | Prometheus, structured logging, tracing |
+| Testing | pytest, FastAPI TestClient, integration and acceptance tests |
+| Deployment | Render, Vercel |
+
+## API Reference
+
+Base URL:
+
+```text
+https://ai-research-agent-a166.onrender.com
+```
+
+### 1. Create a Research Job
+
+`POST /research`
+
+Request:
+
+```json
+{
+  "question": "What is pgvector HNSW indexing?"
+}
+```
+
+The question must contain between 1 and 2,000 characters.
+
+Successful response: `201 Created`
+
+```json
+{
+  "id": "YOUR_RESEARCH_JOB_ID",
+  "question": "What is pgvector HNSW indexing?",
+  "status": "pending"
+}
+```
+
+### 2. Retrieve Job Status
+
+`GET /research/{id}`
+
+Returns the job information and its current status.
+
+Possible lifecycle states:
+
+- `pending`
+- `running`
+- `completed`
+- `failed`
+
+Invalid UUIDs return `400 Bad Request`, while unknown jobs return `404 Not Found`.
+
+### 3. Retrieve the Research Report
+
+`GET /research/{id}/report`
+
+Returns the completed report, including its title, key findings, and citation references.
+
+A report that is not yet available returns `404 Not Found`.
+
+### 4. Stream Research Progress
+
+`GET /research/{id}/stream`
+
+Uses Server-Sent Events to deliver research progress to connected clients.
+
+### 5. Health Check
+
+`GET /health`
+
+Provides a health response for service monitoring.
+
+### 6. Prometheus Metrics
+
+`GET /metrics`
+
+Exposes application metrics, including research-run metrics.
+
+## Development Setup
+
+### Prerequisites
+
+- Python 3.12
+- Node.js and npm
+- PostgreSQL with pgvector support
+- Redis
+- API credentials for the configured LLM and search providers
+
+### Backend Setup
+
+From the repository root:
 
 ```bash
-# 1. Env
-cp .env.example .env  # set GROQ_API_KEY, GEMINI_API_KEY, TAVILY_API_KEY, DATABASE_URL, REDIS_URL
-# 2. Infra (local)
-docker compose up -d postgres redis
-uv run alembic upgrade head
-# 3. Run
-uv run python -m app.workers.research_worker &  # or via supervisor app/supervisor.py
-uv run uvicorn app.sse_app:app --reload --port 8000
-# 4. Frontend
-cd frontend && npm install && NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
-# 5. Test
-uv run pytest -q  # 248 passed
+git clone https://github.com/Shreyyyas22/ai-research-agent.git
+cd ai-research-agent
 ```
 
-## Environment
+Create and activate a virtual environment:
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `GROQ_API_KEY` | For Groq | — | `gsk_...` |
-| `GEMINI_API_KEY` | For Gemini fallback | — | `AIza...` |
-| `TAVILY_API_KEY` | Yes | — | `tvly-dev-...` |
-| `DATABASE_URL` | Yes | `postgresql://...@localhost:5433/research_agent` | Supabase `postgresql://...pooler.supabase.com:5432/postgres` |
-| `REDIS_URL` | Yes | `redis://localhost:6379/0` | Upstash `rediss://...` |
-| `LLM_PROVIDER` | No | `groq` | `groq`/`gemini`/`auto` (auto = Groq→Gemini on daily quota) |
-| `MAX_LLM_CALLS` | No | `50` | Per-job LLM cap |
-| `MAX_TOOL_CALLS` | No | `10` | Per-job web_search cap |
-| `MAX_RESEARCH_TIME` | No | `120` | Seconds, `ResearchRunTimeoutError` |
-| `MAX_CONTEXT_SIZE` | No | `8192` | Tokens, `ContextWindowExceededError` |
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
 
-## API
+Install project dependencies using the repository's existing dependency manager and lockfile.
 
-| Method | Path | Description |
+Configure the required environment variables in `.env`, using `.env.example` as the reference.
+
+Start the backend using the repository's configured ASGI application entry point.
+
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+```
+
+Create a frontend environment file with:
+
+```env
+NEXT_PUBLIC_API_URL=https://ai-research-agent-a166.onrender.com
+```
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+Open the local URL printed by Next.js in your terminal.
+
+> Use the existing project scripts and dependency lockfiles. The exact backend startup command and optional services should be confirmed against the current repository configuration.
+
+## Environment Configuration
+
+Configure the following variables according to your deployment:
+
+| Variable | Purpose |
+|---|---|
+| `GROQ_API_KEY` | Groq API authentication |
+| `GEMINI_API_KEY` | Google Gemini API authentication |
+| `TAVILY_API_KEY` | Tavily web-search authentication |
+| `LLM_PROVIDER` | Selects the configured LLM provider mode |
+| `DATABASE_URL` | PostgreSQL connection configuration |
+| Redis configuration | Connection settings for Redis |
+
+The application also uses configuration for execution limits, retries, database connections, and other operational settings.
+
+Never commit `.env` files, API keys, database passwords, or Redis credentials to source control.
+
+## Testing
+
+Run the backend test suite using the repository's configured environment:
+
+```bash
+uv run pytest -q
+```
+
+Run a compilation check:
+
+```bash
+uv run python -m compileall -q app
+```
+
+Check the Git diff for whitespace errors:
+
+```bash
+git diff --check
+```
+
+The test suite includes unit, integration, and API acceptance coverage for areas such as:
+
+- LLM usage tracking and provider fallback.
+- Gemini retry and quota handling.
+- Research workflow instrumentation and execution limits.
+- URL validation and web-fetch security.
+- Atomic report and evaluation persistence.
+- Concurrent job claiming.
+- Lease creation, heartbeat refresh, and expired-job recovery.
+- API request validation and HTTP response contracts.
+- Health, metrics, and stream endpoint contracts.
+
+Test totals have varied across development checkpoints as tests and implementation changed. Run the commands above against the current checkout to establish the definitive release result.
+
+## Development Milestones
+
+The project evolved through foundational research-agent implementation, reliability work, production deployment, and frontend integration.
+
+| Phase | Milestone | Outcome |
 |---|---|---|
-| `GET` | `/health` | `{"status":"ok"}` |
-| `GET` | `/metrics` | Prometheus `research_runs_total` |
-| `POST` | `/research` | `{question: string 1-2000}` → `201 {id, question, status:pending}` (10/min IP) |
-| `GET` | `/research/{id}` | `{status: pending|running|completed|failed}` |
-| `GET` | `/research/{id}/report` | `ResearchReport` + `sources` (404 if not completed) |
-| `GET` | `/research/{id}/stream` | `text/event-stream` SSE `research-events:{id}` |
+| 0–23 | Research-agent foundation and core workflow | Agent orchestration, retrieval, persistence, instrumentation, and execution controls developed incrementally |
+| 24 | Observability | Structured logging, metrics, and tracing |
+| 25 | Failure recovery and resilience | Provider fallback, retry behavior, concurrent job claiming, and duplicate-prevention tests |
+| 26 | API contract and acceptance | Research creation, status, report, health, metrics, and stream contracts |
+| 27 | Security and operational hardening | Input validation, SSRF protections, secret redaction, timeouts, and operational checks |
+| 28 | Deployment and load validation | IP-based rate limiting, concurrent submission validation, and live deployment checks |
+| 29 | Job lease and recovery | Worker ownership metadata, heartbeat renewal, lease expiry, and abandoned-job reclamation |
+| 30 | Frontend dashboard | Next.js scaffold, Vercel deployment, and a successful real end-to-end research report |
+
+The phase descriptions above summarize the recorded development checkpoints; not every possible production failure scenario has been exhaustively tested.
 
 ## Deployment
 
-* **Backend:** `Dockerfile:26` `python -m app.supervisor` (uvicorn + worker) on **Render** (`PORT` env, `healthCheck /health`), `docker-compose.yml:3` `pgvector/pgvector:pg16` + `redis:7-alpine` for local
-* **DB:** **Supabase** `pgvector 0.8.2` (`alembic upgrade head` via `migrate` service)
-* **Cache:** **Upstash Redis** `socket_connect_timeout 10` `app/db/redis.py:29`
-* **Frontend:** **Vercel** `frontend/` `Next.js 16` `Root Directory: frontend` `NEXT_PUBLIC_API_URL`
+### Frontend
 
-## Testing & Evaluation
+- Platform: Vercel
+- Live URL: https://ai-research-agent-tau-mauve.vercel.app/
+- Root directory: `frontend`
+- Environment variable: `NEXT_PUBLIC_API_URL`
 
-```bash
-uv run pytest -q --cov=app  # 248 passed, 87% cov
-uv run pytest tests/integration/test_report_transaction.py -q  # atomic rollback: grounded=None → NotNullViolation → report None
-uv run python scripts/smoke_test_live_graph.py  # live Groq→Gemini with Tavily (needs keys, ~60-90s)
-```
+### Backend
 
-* **Eval dataset** `app/eval/dataset.json:1` 10 items (`expected_claims`/`must_contain_keywords`) + `app/eval/metrics.py:26` `citation/coverage/grounding/relevance` → `QualityMetrics` + `app/eval/runner.py:28` `EvaluationRunner` JSONL + `app/eval/report.py:28` comparison
+- Platform: Render
+- Live URL: https://ai-research-agent-a166.onrender.com
+- Application API and worker are supervised within the deployed service.
+- PostgreSQL and Redis provide persistence and progress-related infrastructure.
 
-## Known Limitations (frozen at `e0d4a1b` → `76217f7`)
+The first real end-to-end research report was successfully generated through the deployed frontend, backend, Tavily search, LLM provider fallback, database persistence, and report retrieval.
 
-* Free-tier `Groq` `TPD 200k` daily quota → `FallbackProvider` to `Gemini` (verified `bd9637f9 completed score:5` after `429`), but burst `10× POST` can still exhaust — no Redis `slowapi` yet
-* `running` jobs stuck >5m need manual `UPDATE status='failed'` — `lease_expires_at` `app/db/models/research.py:33` + `heartbeat` `app/workers/research_worker.py:42` is in `6241c8c` but live 2-worker fencing not yet proven on Render
-* `Research History` `frontend/app/page.js:15` is `useState` session-only — no `GET /research?limit` persistence
-* Full 65-source graph can exceed `MAX_RESEARCH_TIME 120` — narrow `What is pgvector?` works, broad `Explain pgvector...` needs `300` or `MAX_TOOL_CALLS=3`
+## Known Limitations
 
-## Roadmap
+- Research endpoints are currently public; authentication has not been enabled.
+- IP-based rate limiting uses an in-memory limiter. Its counters are not shared across multiple application processes or instances, so it is not a distributed rate-limiting solution.
+- Render's free tier may sleep during inactivity, increasing the latency of the first request.
+- Groq and Gemini quotas, service availability, and response latency depend on their respective providers.
+- Lease-based recovery has been implemented, but stale-worker fencing across every database write must be verified before claiming complete protection against outdated workers.
+- Multi-worker recovery and the full range of provider and infrastructure failure scenarios have not all been validated in live production.
+- Cost estimates depend on the usage information and pricing assumptions available to the application.
 
-* 24-29 Observability, resilience, API, deployment, recovery ✅
-* 30 Frontend dashboard ✅ `73899f5`
-* 31 Stale-worker fencing live test (2 workers) — pending
-* 32 End-to-end acceptance `Vercel`→`Render`→`report` — live `3c1ed733 completed` proved once
+## Future Improvements
+
+Potential improvements include:
+
+- API authentication and user-level access control.
+- Distributed rate limiting.
+- Strong stale-worker fencing and bounded retry policies.
+- Additional multi-worker and fault-injection tests.
+- Persistent research history and filtering in the dashboard.
+- More detailed report exports and citation presentation.
+- Usage and cost summaries in the frontend.
+- Further performance and concurrency benchmarking.
 
 ## License
 
-MIT — see `pyproject.toml:1`
+Add the project's chosen license before distributing or reusing the code publicly.
