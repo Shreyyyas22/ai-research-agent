@@ -34,6 +34,20 @@ class ResearchJob(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+    worker_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
 
     tasks: Mapped[list["ResearchTask"]] = relationship(
         back_populates="job",

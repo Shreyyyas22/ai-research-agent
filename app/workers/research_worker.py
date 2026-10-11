@@ -71,6 +71,14 @@ class ResearchWorker:
             },
         )
 
+        # Heartbeat: refresh lease for this job if it's still running
+        try:
+            job_uuid = UUID(research_id)
+            await self.job_repository.heartbeat(job_uuid, self.worker_id)
+        except Exception:
+            # Heartbeat failures should not block progress updates
+            pass
+
     async def process(
         self,
         research_id: str,
@@ -135,7 +143,9 @@ class ResearchWorker:
         """Claim and process pending research jobs until stopped."""
 
         while True:
-            research_id = await self.job_repository.claim_next_pending()
+            research_id = await self.job_repository.claim_next_pending(
+                worker_id=self.worker_id
+            )
 
             if research_id is None:
                 await asyncio.sleep(poll_interval)

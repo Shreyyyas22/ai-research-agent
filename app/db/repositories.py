@@ -45,7 +45,10 @@ class ResearchJobRepository:
                     question,
                     status,
                     created_at,
-                    completed_at
+                    completed_at,
+                    lease_expires_at,
+                    worker_id,
+                    retry_count
                 FROM research_jobs
                 WHERE id = $1
                 """,
@@ -57,27 +60,54 @@ class ResearchJobRepository:
 
         return dict(row)
 
-    async def claim_next_pending(self) -> uuid.UUID | None:
-        """Atomically claim the next pending job for a worker."""
+    async def claim_next_pending(
+        self, worker_id: str | None = None, lease_seconds: int = 300
+    ) -> uuid.UUID | None:
+        """Atomically claim the next pending or expired-running job."""
 
         async with self.pool.acquire() as connection:
             job_id = await connection.fetchval(
                 """
                 UPDATE research_jobs
-                SET status = 'running'
+                SET status = 'running',
+                    lease_expires_at = NOW() + ($1::int * INTERVAL '1 second'),
+                    worker_id = $2,
+                    retry_count = CASE
+                        WHEN status = 'running' THEN retry_count + 1
+                        ELSE retry_count
+                    END
                 WHERE id = (
                     SELECT id
                     FROM research_jobs
                     WHERE status = 'pending'
-                    ORDER BY created_at ASC
+                       OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
+                    ORDER BY
+                        CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                        created_at ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
                 RETURNING id
-                """
+                """,
+                lease_seconds,
+                worker_id,
             )
 
         return job_id
+
+    async def heartbeat(self, job_id: uuid.UUID, worker_id: str, lease_seconds: int = 300) -> None:
+        """Refresh lease for an actively processed job; only if still owned by this worker."""
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                """
+                UPDATE research_jobs
+                SET lease_expires_at = NOW() + ($3::int * INTERVAL '1 second')
+                WHERE id = $1 AND worker_id = $2 AND status = 'running'
+                """,
+                job_id,
+                worker_id,
+                lease_seconds,
+            )
 
     async def update_status(
         self,
