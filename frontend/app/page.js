@@ -13,8 +13,35 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
+  const [elapsed, setElapsed] = useState(0);
+  const [friendlyIdx, setFriendlyIdx] = useState(0);
   const eventSourceRef = useRef(null);
   const pollIntervalRef = useRef(null);
+  const elapsedRef = useRef(null);
+  const friendlyMessages = [
+    "Hold on — research is on the way 🔍",
+    "Grab a coffee ☕ — we're digging through 10 sources",
+    "Have a walk 🌿 — we're extracting evidence",
+    "Almost there — checking citations ✨",
+    "Brewing insights — synthesizing findings 🧪",
+    "Hang tight — evaluating with Groq → Gemini fallback 🤖",
+  ];
+
+  // Elapsed timer + friendly rotation while running
+  useEffect(() => {
+    if (status === "running" || status === "pending") {
+      setElapsed(0);
+      setFriendlyIdx(0);
+      elapsedRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+      const rot = setInterval(() => setFriendlyIdx((i) => (i + 1) % friendlyMessages.length), 4000);
+      return () => {
+        clearInterval(elapsedRef.current);
+        clearInterval(rot);
+      };
+    } else {
+      clearInterval(elapsedRef.current);
+    }
+  }, [status]);
 
   const submitResearch = async (e) => {
     e.preventDefault();
@@ -22,11 +49,14 @@ export default function Home() {
     // Clear previous polling/streaming
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     if (eventSourceRef.current) eventSourceRef.current.close();
+    clearInterval(elapsedRef.current);
     setLoading(true);
     setError("");
     setReport(null);
     setProgress([]);
     setStatus("pending");
+    setElapsed(0);
+    setFriendlyIdx(0);
 
     try {
       const res = await fetch(`${API_URL}/research`, {
@@ -159,10 +189,25 @@ export default function Home() {
             </div>
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
             {status && (
-              <div className="flex items-center gap-2 text-sm">
-                <span className={`inline-block h-2 w-2 rounded-full ${status === "completed" ? "bg-green-500" : status === "failed" ? "bg-red-500" : status === "running" ? "bg-blue-500 animate-pulse" : "bg-zinc-400"}`} />
-                <span className="capitalize">{status}</span>
-                {job && <span className="text-zinc-500 text-xs ml-2">{job.id.slice(0, 8)}...</span>}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={`inline-block h-2 w-2 rounded-full ${status === "completed" ? "bg-green-500" : status === "failed" ? "bg-red-500" : status === "running" ? "bg-blue-500 animate-pulse" : "bg-zinc-400"}`} />
+                  <span className="capitalize">{status}</span>
+                  {job && <span className="text-zinc-500 text-xs ml-2">{job.id.slice(0, 8)}...</span>}
+                  {(status === "running" || status === "pending") && (
+                    <span className="text-xs text-zinc-500 ml-auto">~{Math.max(0, 75 - elapsed)}s left • {elapsed}s elapsed</span>
+                  )}
+                </div>
+                {(status === "running" || status === "pending") && (
+                  <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 p-3">
+                    <p className="text-sm text-blue-900 dark:text-blue-200 animate-pulse">{friendlyMessages[friendlyIdx]}</p>
+                    <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">Approx 60–90s • Tavily (10) + Groq → Gemini fallback • you’ll love the citations ✨</p>
+                    <div className="mt-2 h-1.5 w-full bg-blue-100 dark:bg-blue-900 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-600 dark:bg-blue-400 transition-all duration-1000" style={{ width: `${Math.min(95, (elapsed / 75) * 100)}%` }} />
+                    </div>
+                  </div>
+                )}
+                {status === "completed" && <p className="text-sm text-green-700 dark:text-green-300">Done in {elapsed}s — report ready below ↓</p>}
               </div>
             )}
           </form>
