@@ -70,6 +70,7 @@ export default function Home() {
       }
       const data = await res.json();
       setJob(data);
+      setQuestion("");
       setStatus(data.status);
       pollStatus(data.id);
       streamProgress(data.id);
@@ -212,7 +213,29 @@ export default function Home() {
             )}
           </form>
 
-          {progress.length > 0 && (
+          {(status === "running" || status === "pending") && job && (
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border dark:border-zinc-800 p-6 space-y-3">
+              <h3 className="font-medium">In Progress</h3>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 rounded-lg p-3">Researching: “{job.question}”</p>
+              <div className="flex items-center gap-2 text-sm text-zinc-500">
+                <span className="h-2 w-2 bg-blue-500 rounded-full animate-pulse" />
+                <span>{progress.length > 0 ? progress[progress.length - 1]?.progress || "working..." : "starting..."}</span>
+                <span className="ml-auto text-xs">{progress.length} steps</span>
+              </div>
+              {progress.length > 0 && (
+                <div className="space-y-1 max-h-[150px] overflow-auto border-t dark:border-zinc-800 pt-3">
+                  {progress.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <span className="text-zinc-400">{i + 1}.</span>
+                      <span>{p.progress || p.type}</span>
+                      <span className="text-zinc-500 ml-auto">{p.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {progress.length > 0 && status !== "running" && status !== "pending" && (
             <div className="bg-white dark:bg-zinc-900 rounded-xl border dark:border-zinc-800 p-6">
               <h3 className="font-medium mb-3">Live Progress</h3>
               <div className="space-y-2 max-h-[200px] overflow-auto">
@@ -310,15 +333,7 @@ export default function Home() {
             )}
           </div>
 
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border dark:border-zinc-800 p-6">
-            <h3 className="font-medium mb-2">How it works</h3>
-            <ol className="text-sm text-zinc-600 dark:text-zinc-400 space-y-1 list-decimal list-inside">
-              <li>Submit a research question</li>
-              <li>Watch live progress via SSE</li>
-              <li>View grounded report with citations</li>
-            </ol>
-            <p className="text-xs text-zinc-500 mt-3">Backend: FastAPI on Render • DB: Supabase pgvector • Progress: Redis Pub/Sub</p>
-          </div>
+
         </div>
       </main>
     </div>
