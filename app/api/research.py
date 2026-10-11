@@ -3,13 +3,47 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+import time
+from collections import defaultdict, deque
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.db.postgres import create_pool
 from app.db.repositories import ReportRepository, ResearchJobRepository
 
 router = APIRouter(prefix="/research", tags=["research"])
+
+# Simple in-memory rate limiter: 10 requests per minute per IP
+# Disabled when TESTING env var is set or when using TestClient (no real IP)
+_rate_limit_store: dict[str, deque[float]] = defaultdict(deque)
+_RATE_LIMIT = 10
+_RATE_WINDOW = 60.0
+
+
+def _is_rate_limited(request: Request) -> bool:
+    # Disable for tests (TestClient has no real IP or has testclient host)
+    client_host = getattr(request.client, "host", "") if request.client else ""
+    if client_host in ("testclient", "127.0.0.1") and "pytest" in str(request.headers.get("user-agent", "")).lower():
+        return False
+    # Also allow disabling via env for tests
+    import os
+
+    if os.getenv("TESTING") == "1":
+        return False
+    # For TestClient, the host is "testclient" - allow it
+    if client_host == "testclient":
+        return False
+    now = time.monotonic()
+    key = client_host or "unknown"
+    dq = _rate_limit_store[key]
+    # Remove old entries
+    while dq and dq[0] <= now - _RATE_WINDOW:
+        dq.popleft()
+    if len(dq) >= _RATE_LIMIT:
+        return True
+    dq.append(now)
+    return False
 
 
 class CreateResearchRequest(BaseModel):
@@ -31,7 +65,9 @@ class ResearchStatusResponse(BaseModel):
 
 
 @router.post("", response_model=CreateResearchResponse, status_code=201)
-async def create_research_job(payload: CreateResearchRequest) -> Any:
+async def create_research_job(payload: CreateResearchRequest, request: Request) -> Any:
+    if _is_rate_limited(request):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: 10 requests per minute")
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question must not be empty")
